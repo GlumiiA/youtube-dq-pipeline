@@ -1,14 +1,13 @@
 import json
-from datetime import date
 import logging
 
 logger = logging.getLogger(__name__)
 
-def load_data():
-    file_path = f"./data/YT_data_{date.today()}.json" # Construct the file path for the JSON file based on the current date
+def load_data(data_date):
+    file_path = f"./data/YT_data_{data_date}.json" # Файл с выгрузкой за дату запуска
 
     try:
-        logger.info(f"Processing file: YT_data_{date.today()}") # Log the file being processed
+        logger.info(f"Processing file: {file_path}") # Log the file being processed
         with open(file_path, 'r', encoding='utf-8') as raw_data: # Open the JSON file for reading
             data = json.load(raw_data) # Load the contents of the JSON file into a Python dictionary
 

@@ -55,6 +55,8 @@ with DAG(
     trigger_update_db = TriggerDagRunOperator(
         task_id="trigger_update_db",
         trigger_dag_id="update_db",
+        # update_db должен прочитать файл именно за эту дату, а не за «сегодня»
+        conf={"data_date": "{{ data_interval_end | ds }}"},
     )
 
     # Define dependencies

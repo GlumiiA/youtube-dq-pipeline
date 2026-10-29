@@ -10,13 +10,17 @@ logger = logging.getLogger(__name__)
 table = "yt_api"
 
 @task
-def staging_table():
+def staging_table(dag_run=None, data_interval_end=None):
     schema = 'staging'
     conn, cur = None, None
 
+    # Дату передаёт produce_json через conf. Если update_db запущен вручную
+    # без conf, берём дату его собственного запуска.
+    data_date = (dag_run.conf or {}).get("data_date") or data_interval_end.to_date_string()
+
     try:
         conn, cur = get_conn_cursor()
-        YT_data = load_data()
+        YT_data = load_data(data_date)
         create_schema(schema)
         create_table(schema)
 

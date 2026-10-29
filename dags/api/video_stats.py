@@ -1,7 +1,6 @@
 import requests, json
 import os
 
-from datetime import date
 
 # import os
 # from dotenv import load_dotenv
@@ -135,9 +134,13 @@ def extract_video_data(video_ids):
 
 
 @task
-def save_to_json(extracted_data):
+def save_to_json(extracted_data, data_interval_end=None):
+    # Файл называется по дате запуска, а не по текущему времени на сервере:
+    # перезапуск за прошлый день пишет файл за тот же день, а не за сегодня.
+    # data_interval_end Airflow подставляет сам из контекста запуска.
+    data_date = data_interval_end.to_date_string()
     os.makedirs("./data", exist_ok=True)
-    file_path = f"./data/YT_data_{date.today()}.json"
+    file_path = f"./data/YT_data_{data_date}.json"
     with open(file_path, "w", encoding="utf-8") as json_outfile:
         json.dump(extracted_data, json_outfile, indent=4, ensure_ascii=False)
 
