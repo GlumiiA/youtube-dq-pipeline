@@ -64,14 +64,3 @@ def create_table(schema):
     cur.execute(table_sql) # Execute the SQL statement
     con.commit() # Commit the transaction
     close_conn_cursor(con, cur) # Close the connection and cursor
-
-def get_video_ids(cur, schema):
-    cur.execute(
-        sql.SQL('SELECT "Video_ID" FROM {schema}.{table};').format(
-            schema=sql.Identifier(schema),
-            table=sql.Identifier(table)
-        )
-    ) # Execute a SQL query to select all video IDs from the specified schema and table
-    ids = cur.fetchall() # Fetch all results from the executed query
-    video_ids = [row["Video_ID"] for row in ids] # Extract video IDs from the fetched results and create a list of video IDs
-    return video_ids # Return the list of video IDs

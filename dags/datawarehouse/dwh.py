@@ -1,6 +1,6 @@
-from datawarehouse.data_utils import get_conn_cursor, close_conn_cursor, create_schema, create_table, get_video_ids
+from datawarehouse.data_utils import get_conn_cursor, close_conn_cursor, create_schema, create_table
 from datawarehouse.data_loading import load_data
-from datawarehouse.data_modification import insert_rows, update_rows, delete_rows
+from datawarehouse.data_modification import COLUMNS, upsert_rows, delete_missing_rows
 from datawarehouse.data_transformation import transform_data
 
 import logging
@@ -19,38 +19,40 @@ def staging_table(dag_run=None, data_interval_end=None):
     data_date = (dag_run.conf or {}).get("data_date") or data_interval_end.to_date_string()
 
     try:
-        conn, cur = get_conn_cursor()
         YT_data = load_data(data_date)
+
+        # Пустая выгрузка — это сбой источника, а не канал без видео.
+        # Без этой проверки delete_missing_rows удалил бы из таблицы все строки.
+        if not YT_data:
+            raise ValueError(f"Empty extract for {data_date}: refusing to load and wipe {schema}.{table}")
+
         create_schema(schema)
         create_table(schema)
 
-        table_ids = get_video_ids(cur, schema)
+        # Ключи JSON из API в порядке колонок staging
+        json_keys = ["video_id", "title", "published_at", "duration",
+                     "view_count", "like_count", "comment_count"]
+        rows = [tuple(item[k] for k in json_keys) for item in YT_data]
 
-        for row in YT_data:
-            if len(table_ids) == 0:
-                insert_rows(cur, conn, schema, row)
-            else:
-                if row['video_id'] in table_ids:
-                    update_rows(cur, conn, schema, row)
-                else:
-                    insert_rows(cur, conn, schema, row)
+        # Вставка, обновление и удаление идут в одной транзакции:
+        # таблица либо целиком обновится, либо останется как была.
+        conn, cur = get_conn_cursor()
+        upsert_rows(cur, schema, rows)
+        delete_missing_rows(cur, schema, [item["video_id"] for item in YT_data])
+        conn.commit()
 
-        ids_in_json = {row['video_id'] for row in YT_data}
-
-        ids_to_delete = set(table_ids) - ids_in_json
-
-        if ids_to_delete:
-            delete_rows(cur, conn, schema, ids_to_delete)
-
-        logger.info(f"{schema} table update completed!")
+        logger.info(f"{schema} table update completed: {len(rows)} videos from {data_date}")
 
     except Exception as e:
+        if conn:
+            conn.rollback()
         logger.error(f"Error in {schema} table update: {e}")
-        raise e
-    
+        raise
+
     finally:
         if conn and cur:
             close_conn_cursor(conn, cur)
+
 
 @task
 def core_table():
@@ -58,47 +60,27 @@ def core_table():
     conn, cur = None, None
 
     try:
-        conn, cur = get_conn_cursor()
         create_schema(schema)
         create_table(schema)
 
-        table_ids = get_video_ids(cur, schema)
-
-        current_video_ids = set()
-
+        conn, cur = get_conn_cursor()
         cur.execute(f"SELECT * FROM staging.{table};")
-        rows = cur.fetchall()
+        transformed = [transform_data(row) for row in cur.fetchall()]
+        rows = [tuple(r[c] for c in COLUMNS[schema]) for r in transformed]
 
-        for row in rows:
-            current_video_ids.add(row["Video_ID"])
+        # Одна транзакция, как и в staging
+        upsert_rows(cur, schema, rows)
+        delete_missing_rows(cur, schema, [r["Video_ID"] for r in transformed])
+        conn.commit()
 
-            if len(table_ids) == 0:
-                transformed_row = transform_data(row)
-                insert_rows(cur, conn, schema, transformed_row)
-
-            else:
-                transformed_row = transform_data(row)
-
-                if transformed_row['Video_ID'] in table_ids:
-                    update_rows(cur, conn, schema, transformed_row)
-                else:
-                    insert_rows(cur, conn, schema, transformed_row)
-
-        ids_to_delete = set(table_ids) - current_video_ids
-
-        if ids_to_delete:
-            delete_rows(cur, conn, schema, ids_to_delete)
-
-        logger.info(f"{schema} table update completed!")
+        logger.info(f"{schema} table update completed: {len(rows)} videos")
 
     except Exception as e:
-        #Log any errors that occur during the update process for the core table, including the specific error message, to help with debugging and troubleshooting.
+        if conn:
+            conn.rollback()
         logger.error(f"Error in {schema} table update: {e}")
-        raise e
-    
-    finally: # Ensure that the database connection and cursor are properly closed after the operations are completed, regardless of whether an error occurred or not.
+        raise
+
+    finally:
         if conn and cur:
             close_conn_cursor(conn, cur)
-
-
-

@@ -1,109 +1,55 @@
 import logging
+
 from psycopg2 import sql
+from psycopg2.extras import execute_values
 
 logger = logging.getLogger(__name__)
 table = "yt_api"
 
-def insert_rows(cur, conn, schema, row):
+# Колонки таблицы в каждой схеме. Ключ "Video_ID" — первичный ключ.
+COLUMNS = {
+    "staging": ["Video_ID", "Video_Title", "Upload_Date", "Duration",
+                "Video_Views", "Likes_Count", "Comments_Count"],
+    "core": ["Video_ID", "Video_Title", "Upload_Date", "Duration", "Video_Type",
+             "Video_Views", "Likes_Count", "Comments_Count"],
+}
+KEY = "Video_ID"
 
-    try:
-        if schema == 'staging':
-            video_id = 'video_id'
-            cur.execute(
-                sql.SQL("""INSERT INTO {schema}.{table}("Video_ID", "Video_Title", "Upload_Date", "Duration", "Video_Views", "Likes_Count", "Comments_Count")
-                VALUES (%(video_id)s, %(title)s, %(published_at)s, %(duration)s, %(view_count)s, %(like_count)s, %(comment_count)s);""").format(
-                    schema=sql.Identifier(schema),
-                    table=sql.Identifier(table)
-                ),
-                row
-            )
-        else:
-            video_id = 'Video_ID'
-            cur.execute(
-                sql.SQL("""INSERT INTO {schema}.{table}("Video_ID", "Video_Title", "Upload_Date", "Duration", "Video_Type", "Video_Views", "Likes_Count", "Comments_Count")
-                VALUES (%(Video_ID)s, %(Video_Title)s, %(Upload_Date)s, %(Duration)s, %(Video_Type)s, %(Video_Views)s, %(Likes_Count)s, %(Comments_Count)s);""").format(
-                    schema=sql.Identifier(schema),
-                    table=sql.Identifier(table)
-                ),
-                row
-            )
 
-        conn.commit() # Commit the transaction to save changes to the database
-        logger.info(f"Inserted row with Video ID: {row[video_id]}") # Log the successful insertion of the row
+def upsert_rows(cur, schema, rows):
+    """Вставляет новые видео и обновляет существующие одной командой.
 
-    except Exception as e:
-        logger.error(f"Error inserting row with Video ID: {row[video_id]}") # Log any errors that occur during the insertion process
-        raise e # Re-raise the exception to be handled by the calling code
-    
-def update_rows(cur, conn, schema, row):
+    rows — список кортежей в порядке COLUMNS[schema].
+    INSERT ... ON CONFLICT по первичному ключу делает загрузку идемпотентной:
+    повторный запуск с теми же данными даёт тот же результат, без дублей.
+    """
+    columns = COLUMNS[schema]
+    updates = [c for c in columns if c != KEY]
 
-    try:
-        #staging
-        if schema == 'staging':
-            video_id = 'video_id'
-            upload_date = 'published_at'
-            video_title = 'title'
-            video_views = 'view_count'
-            likes_count = 'like_count'
-            comments_count = 'comment_count'
-        #core
-        else:
-            video_id = 'Video_ID'
-            upload_date = 'Upload_Date'
-            video_title = 'Video_Title'
-            video_views = 'Video_Views'
-            likes_count = 'Likes_Count'
-            comments_count = 'Comments_Count'
+    query = sql.SQL("""
+        INSERT INTO {schema}.{table} ({columns})
+        VALUES %s
+        ON CONFLICT ({key}) DO UPDATE SET {updates};
+    """).format(
+        schema=sql.Identifier(schema),
+        table=sql.Identifier(table),
+        columns=sql.SQL(", ").join(map(sql.Identifier, columns)),
+        key=sql.Identifier(KEY),
+        updates=sql.SQL(", ").join(
+            sql.SQL("{col} = EXCLUDED.{col}").format(col=sql.Identifier(c)) for c in updates
+        ),
+    )
 
-        # В core тип видео вычисляется при загрузке, поэтому его тоже нужно обновлять:
-        # иначе изменение правила классификации не применится к уже загруженным видео.
-        video_type_set = ',\n                "Video_Type" = %(Video_Type)s' if schema != 'staging' else ''
+    execute_values(cur, query, rows, page_size=500)
+    logger.info(f"Upserted {len(rows)} rows into {schema}.{table}")
 
-        # Build the query string by injecting the placeholder *names* (like 'title' or 'Video_Title')
-        # into the %(name)s placeholders using an f-string, then format the schema/table
-        # with sql.Identifier to avoid Python's .format() trying to replace those placeholder names.
-        query_str = f"""
-            UPDATE {{schema}}.{{table}}
-            SET "Video_Title" = %({video_title})s,
-                "Video_Views" = %({video_views})s,
-                "Likes_Count" = %({likes_count})s,
-                "Comments_Count" = %({comments_count})s{video_type_set}
-            WHERE "Video_ID" = %({video_id})s AND "Upload_Date" = %({upload_date})s;
-            """
 
-        query = sql.SQL(query_str).format(
-            schema=sql.Identifier(schema),
-            table=sql.Identifier(table)
-        )
-
-        cur.execute(query, row)
-
-        conn.commit() # Commit the transaction to save changes to the database
-        logger.info(f"Updated row with Video ID: {row[video_id]}") # Log the successful update of the row
-
-    except Exception as e:
-        logger.error(f"Error updating row with Video ID: {row[video_id]} - {str(e)}") # Log any errors that occur during the update process
-        raise e # Re-raise the exception to be handled by the calling code
-    
-def delete_rows(cur, conn, schema, ids_to_delete):
-
-    try:
-        delete_list = tuple(ids_to_delete)
-        query = sql.SQL(
-            """
-            DELETE FROM {schema}.{table}
-            WHERE "Video_ID" IN %s;
-            """
-        ).format(
-            schema=sql.Identifier(schema),
-            table=sql.Identifier(table)
-        )
-
-        cur.execute(query, (delete_list,))
-
-        conn.commit() # Commit the transaction to save changes to the database
-        logger.info(f"Deleted rows with Video ID: {delete_list}") # Log the successful deletion of the rows
-
-    except Exception as e:
-        logger.error(f"Error deleting rows with Video ID: {ids_to_delete} - {str(e)}") # Log any errors that occur during the deletion process
-        raise e # Re-raise the exception to be handled by the calling code
+def delete_missing_rows(cur, schema, keep_ids):
+    """Удаляет видео, которых больше нет в свежей выгрузке (удалены или скрыты на канале)."""
+    query = sql.SQL('DELETE FROM {schema}.{table} WHERE {key} <> ALL(%s);').format(
+        schema=sql.Identifier(schema),
+        table=sql.Identifier(table),
+        key=sql.Identifier(KEY),
+    )
+    cur.execute(query, (list(keep_ids),))
+    logger.info(f"Deleted {cur.rowcount} rows from {schema}.{table} that are no longer on the channel")
