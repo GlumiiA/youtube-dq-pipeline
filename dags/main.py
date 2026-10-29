@@ -19,10 +19,17 @@ default_args = {
     "email":"hello@raivis.it",
     # "retries": 1,
     # "retry_delay": timedelta(minutes=5),
-    "max_active_runs": 1,
-    "dagrun_timeout": timedelta(minutes=60),
     "start_date": datetime(2026, 5, 27, tzinfo=local_tz),
     # "end_date": datetime(2024, 6, 30, tzinfo=local_tz)
+}
+
+# Ограничения на уровне всего запуска DAG.
+# Это параметры DAG, а не задач, поэтому в default_args они не действуют.
+# max_active_runs=1: повторный запуск ждёт в очереди, пока не закончится текущий,
+# иначе два запуска одновременно пишут в одни и те же таблицы.
+dag_run_limits = {
+    "max_active_runs": 1,
+    "dagrun_timeout": timedelta(minutes=60),
 }
 
 # Variables
@@ -35,7 +42,8 @@ with DAG(
      default_args=default_args,
      description="A DAG to extract video stats from YouTube API and save it as JSON",
      schedule="0 14 * * *", # Run daily at 14:00 (2 PM) local time
-     catchup=False
+     catchup=False,
+     **dag_run_limits,
 ) as dag_produce:
     
     # Define the tasks
@@ -59,7 +67,8 @@ with DAG(
      default_args=default_args,
      description="DAG to process JSON file and insert data into the staging and core schemas",
      schedule=None,
-     catchup=False
+     catchup=False,
+     **dag_run_limits,
 ) as dag_update:
     
     # Define the tasks
@@ -81,7 +90,8 @@ with DAG(
      default_args=default_args,
      description="DAG to check the data quality on both layers in the db",
      schedule=None,
-     catchup=False
+     catchup=False,
+     **dag_run_limits,
 ) as dag_quality:
     
     # Define the tasks
