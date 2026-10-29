@@ -55,6 +55,10 @@ def update_rows(cur, conn, schema, row):
             likes_count = 'Likes_Count'
             comments_count = 'Comments_Count'
 
+        # В core тип видео вычисляется при загрузке, поэтому его тоже нужно обновлять:
+        # иначе изменение правила классификации не применится к уже загруженным видео.
+        video_type_set = ',\n                "Video_Type" = %(Video_Type)s' if schema != 'staging' else ''
+
         # Build the query string by injecting the placeholder *names* (like 'title' or 'Video_Title')
         # into the %(name)s placeholders using an f-string, then format the schema/table
         # with sql.Identifier to avoid Python's .format() trying to replace those placeholder names.
@@ -63,7 +67,7 @@ def update_rows(cur, conn, schema, row):
             SET "Video_Title" = %({video_title})s,
                 "Video_Views" = %({video_views})s,
                 "Likes_Count" = %({likes_count})s,
-                "Comments_Count" = %({comments_count})s
+                "Comments_Count" = %({comments_count})s{video_type_set}
             WHERE "Video_ID" = %({video_id})s AND "Upload_Date" = %({upload_date})s;
             """
 

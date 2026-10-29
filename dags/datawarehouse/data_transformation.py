@@ -1,5 +1,9 @@
 from datetime import timedelta, datetime
 
+# С октября 2024 года YouTube разрешает Shorts длиной до 3 минут.
+# Прямого признака Shorts в YouTube Data API нет, поэтому тип определяется по длительности.
+SHORTS_MAX_DURATION = timedelta(minutes=3)
+
 def parse_duration(duration_str):
     duration_str = duration_str.replace('P', '').replace('T', '')
     components = ['D', 'H', 'M', 'S']
@@ -19,5 +23,5 @@ def parse_duration(duration_str):
 def transform_data(row):
     duration_td = parse_duration(row['Duration'])
     row['Duration'] = (datetime.min + duration_td).time() # Convert timedelta to time format
-    row['Video_Type'] = 'Shorts' if duration_td.total_seconds() <= 60 else 'Normal'
+    row['Video_Type'] = 'Shorts' if duration_td <= SHORTS_MAX_DURATION else 'Normal'
     return row
