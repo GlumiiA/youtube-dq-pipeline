@@ -10,17 +10,17 @@ from dataquality.soda import yt_elt_data_quality
 #Define the local timezone
 local_tz = pendulum.timezone("Europe/Riga")
 
-#Default Args
+# Параметры по умолчанию для всех задач.
+# Ретраи защищают от временных сбоев сети, API и базы: 3 повторные попытки,
+# паузы между ними растут (примерно 1, 2, 4 минуты), но не больше 10 минут.
 default_args = {
     "owner": "dataengineers",
     "depends_on_past": False,
-    "email_on_failure": False,
-    "email_on_retry": False,
-    "email":"hello@raivis.it",
-    # "retries": 1,
-    # "retry_delay": timedelta(minutes=5),
+    "retries": 3,
+    "retry_delay": timedelta(minutes=1),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=10),
     "start_date": datetime(2026, 5, 27, tzinfo=local_tz),
-    # "end_date": datetime(2024, 6, 30, tzinfo=local_tz)
 }
 
 # Ограничения на уровне всего запуска DAG.

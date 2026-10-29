@@ -10,6 +10,9 @@ def yt_elt_data_quality(schema):
     try:
         task = BashOperator(
             task_id = f"soda_test_{schema}",
+            # Проваленная проверка качества при повторе даст тот же результат:
+            # данные не изменятся. Ретраи здесь только задержат сигнал о проблеме.
+            retries = 0,
             bash_command = f"soda scan -d {DATASOURCE} -c {SODA_PATH}/configuration.yml -v SCHEMA={schema} {SODA_PATH}/checks.yml",
         )
         return task
